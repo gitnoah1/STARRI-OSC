@@ -1,76 +1,90 @@
-# minecraft-mcp
+# Starri Pose -> OSC
 
-A Minecraft bot controlled by Claude over MCP (Model Context Protocol), built on [Mineflayer](https://github.com/PrismarineJS/mineflayer). Give Claude Desktop natural-language commands and it'll move, mine, build, fight, and chat in-game.
+Headsetless VR motion tracking: webcam -> Starri's bundled TFLite pose model -> OSC -> SteamVR.
 
-This is a personal fork/setup based on [yuniko-software/minecraft-mcp-server](https://github.com/yuniko-software/minecraft-mcp-server).
+## What this does
 
-> [!IMPORTANT]
-> Tested against Minecraft 1.21.11. Newer versions may not work until support is added.
+Starri (the Steam game) ships with lightweight MobileNetV1-based pose estimation
+models. This script pulls one of those models out of the game's install folder,
+runs it against a webcam feed, and streams the detected body keypoints out over
+OSC so they can drive SteamVR trackers (or VRChat avatar params) without a
+headset's built-in tracking.
 
-## Prerequisites
-
-- Git
-- Node.js >= 20.10.0
-- A running Minecraft world (Java Edition, singleplayer opened to LAN)
-- Claude Desktop with Developer Mode enabled (Settings → Developer)
-
-## Setup
+## Requirements
 
 ```bash
-git clone https://github.com/gitnoah1/mc-claudemcp.git
-cd mc-claudemcp
-npm install
-npm run build
+pip install opencv-python numpy python-osc pynput tensorflow
 ```
 
-## Running
+Or via a `requirements.txt`:
 
-1. **Open your Minecraft world to LAN**
-   In-game: `Esc → Open to LAN`. Note the port (default `25565`).
+```
+opencv-python
+numpy
+python-osc
+pynput
+tensorflow
+```
 
-2. **Add the server to Claude Desktop's config**
-   `Settings → Developer → Edit Config` opens `claude_desktop_config.json`. Add:
+(`tensorflow` is only used for `tf.lite.Interpreter`. If you'd rather not pull
+in full TF, swap to `tflite-runtime` instead — the script will use whichever
+is installed.)
 
-   ```json
-   {
-     "mcpServers": {
-       "minecraft": {
-         "command": "node",
-         "args": ["C:\\Users\\vanes\\Downloads\\mc-claudemcp\\dist\\main.js"],
-         "env": {
-           "MINECRAFT_HOST": "localhost",
-           "MINECRAFT_PORT": "25565",
-           "MINECRAFT_USERNAME": "ClaudeBot"
-         }
-       }
-     }
-   }
-   ```
+## Model files
 
-   Adjust the path, host, and port to match your setup.
+Located at:
 
-3. **Fully restart Claude Desktop** (quit from the tray, not just close the window).
+```
+C:\Program Files (x86)\Steam\steamapps\common\Starri\Starri_Data\StreamingAssets\mlModels\
+```
 
-4. Start a chat and tell Claude to do something in Minecraft — mentioning Minecraft in the prompt is what triggers the tool call and permission prompt.
+Three variants are bundled:
 
-## Available Tools
+| File | Size | Notes |
+|---|---|---|
+| `mnv1_fuse3_256p_w256xh144.tflite` | 13.6 MB | Default used in the script; largest, likely most accurate |
+| `mnv1_a50_fuse3_256p_w256xh144.tflite` | 4.4 MB | Smaller/faster variant |
+| `mnv1_a50_fuse5_256p_w256xh144.tflite` | 2.8 MB | Smallest/fastest variant |
 
-**Movement** — `get-position`, `move-to-position`, `look-at`, `jump`, `move-in-direction`
-**Flight** — `fly-to`
-**Inventory** — `list-inventory`, `find-item`, `equip-item`
-**Blocks** — `place-block`, `dig-block`, `get-block-info`, `find-block`
-**Furnace** — `smelt-item`
-**Entities** — `find-entity`
-**Chat** — `send-chat`, `read-chat`
-**Game state** — `detect-gamemode`
+Swap `MODEL_PATH` in the script to try the other two if you need more speed at
+the cost of accuracy.
 
-## Notes
+## Usage
 
-- First tool call after Claude Desktop boots can be slow — the MCP server is spinning up.
-- Claude will ask permission before controlling the bot the first time each session.
-- Works best with Claude Sonnet/Opus for more complex build requests (you can even feed it a reference image).
+```bash
+python starri_pose_input.py
+```
 
-## Credits
+On first run, check the console for `INPUT DETAILS` / `OUTPUT DETAILS` —
+this confirms the model's real tensor shapes and keypoint format (the script
+assumes COCO-17 style keypoints and supports both direct-coordinate and
+heatmap-style outputs, but you should verify against what's actually printed).
 
-Built on [mineflayer](https://github.com/PrismarineJS/mineflayer) 
-ps bash your head agasit a rock love noah
+A debug window will show the webcam feed with detected keypoints overlaid.
+Press `ESC` to quit.
+
+## OSC output
+
+Sends to `127.0.0.1:9000` by default (VRChat's typical OSC input port) using
+per-keypoint addresses:
+
+```
+/starri/<keypoint_name>/x
+/starri/<keypoint_name>/y
+/starri/<keypoint_name>/confidence
+```
+
+Change `OSC_IP` / `OSC_PORT` in the script if you're targeting a custom
+SteamVR driver instead of VRChat.
+
+## Known gaps / to verify
+
+- Exact keypoint order and count haven't been confirmed against the live
+  model output yet (see `KEYPOINT_NAMES` in the script)
+- Whether the model outputs heatmaps or direct coordinates isn't confirmed
+- OSC address scheme is generic and may need remapping to match whatever
+  driver/avatar setup is receiving it
+- No calibration step yet (raw normalized 0-1 coords, no scaling to
+  real-world tracker space)
+
+See `changelog.md` for version history.
